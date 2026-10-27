@@ -1,67 +1,68 @@
 # Counterpoint
 
-An AI debate coach for practising clear, respectful arguments about everyday, low-stakes ethical questions.
-Choose a question, pick a side, debate an AI opponent for three turns, then get rubric-based feedback from a separate judge.
+Counterpoint is a debate coach for practising clear, respectful arguments about everyday, low-stakes ethical questions. Choose a prompt, take a side, debate an AI opponent for three turns, and receive rubric-based feedback from a separate judge.
+
+## What it does
+
+- Lets you choose a question and argue either side.
+- Gives you three turns with an AI opponent.
+- Scores both speakers on claim clarity, relevant support, rebuttal, consistency, and respectful communication.
+- Separates unverified factual claims from rubric feedback.
+- Lets you report an unfair or unhelpful assessment.
+
+## Run locally
+
+There is no build step or package installation.
+
+1. Open `index.html` in a modern browser, or serve the folder:
+
+   ```bash
+   python3 -m http.server 8000
+   ```
+
+2. Visit [http://localhost:8000](http://localhost:8000).
+
+The standalone page uses demo mode. It works without an API key; the sample opponent turns are prewritten and the feedback is illustrative rather than generated from your responses. Fonts load from Google Fonts when online, with system-font fallbacks.
+
+## Live mode
+
+Live mode is available when `artifact-source.html` is published as a Claude Artifact. The viewer can authorize separate Claude calls for the opponent, custom-question screening, and judge. The artifact database stores reports under `reports/<viewer id>/items`; outside that environment, reports are saved to the browser's local storage.
+
+Configure the Artifact with these capabilities:
+
+```json
+{
+  "sample": {},
+  "user": {},
+  "db": {
+    "rules": [
+      { "path": "reports", "read": "admin", "write": "admin" },
+      { "path": "reports/{self}", "read": "interact", "write": "interact" }
+    ]
+  }
+}
+```
 
 ## Files
 
-| File | What it is |
-|---|---|
-| `index.html` | Standalone page. Open it directly in any modern browser. |
-| `artifact-source.html` | The same app as published on claude.ai (no `<html>`/`<head>` wrapper; the platform adds it). |
-| `README.md` | This file. |
+- `index.html` - standalone page for local use.
+- `artifact-source.html` - Artifact source; the platform supplies the outer HTML document.
+- `README.md` - setup and project notes.
 
-## How to run
+## Feedback and limitations
 
-- **Standalone:** double-click `index.html`, or serve the folder (`python3 -m http.server`) and open `http://localhost:8000`.
-  No build step or install. Fonts load from Google Fonts; system fonts are used if offline.
-- **On claude.ai:** publish `artifact-source.html` as an Artifact with these capabilities:
-  ```json
-  { "sample": {}, "user": {},
-    "db": { "rules": [
-      { "path": "reports", "read": "admin", "write": "admin" },
-      { "path": "reports/{self}", "read": "interact", "write": "interact" } ] } }
-  ```
+The judge sees speakers as Debater A and Debater B and uses a fixed five-part rubric. The page calculates the result from rubric totals; it is not selected by the model. Quoted excerpts are checked against the transcript, while factual claims remain unverified.
 
-## Live vs. demo
+AI judging can be inconsistent, and anonymisation and bias instructions do not remove all bias. Custom-question screening uses both a keyword filter and a Claude check, so it can make mistakes. Live mode has not been exercised end to end during development.
 
-- **Live mode** runs only inside a Claude Artifact viewer, where `window.claude.use("sample")` is available.
-  The opponent, the custom-question check, and the judge are separate Claude calls on the viewer's own account
-  (the viewer is asked to allow it on first use).
-- **Demo mode** is used everywhere else, including when you open `index.html` locally. Opponent turns are pre-written
-  and labelled; the assessment is labelled illustrative and is not computed from your text. Custom questions need live mode.
-- To use a different AI provider outside Claude, replace the `S.sample(...)` / `S.sample.json(...)` calls in the script
-  with requests to your own backend. Don't put API keys in the page.
+For a different AI provider, route requests through your own backend. **Do not put API keys in the HTML page.**
 
-## How judging works
+## Research and design notes
 
-- The judge sees the speakers only as "Debater A" and "Debater B", scored 1–5 on five criteria: clear claim; relevant
-  reasons and examples; response to the other side; internal consistency; respectful, focused communication.
-- Prompts tell the judge not to reward length, speaking order, or agreement with its own view.
-- Win / loss / tie is computed in the page from rubric totals, not chosen by the model.
-- Quoted excerpts are checked against the transcript; non-verbatim ones are marked.
-- Factual claims are listed separately as unverified. Nothing in the app checks facts.
+- [WCAG 2.2 changes](https://www.w3.org/WAI/standards-guidelines/wcag/new-in-22/) informed focus visibility and target sizing.
+- [Zheng et al. (2023)](https://arxiv.org/abs/2306.05685) document position, verbosity, and self-enhancement biases in language-model judges.
+- The [Google PAIR Guidebook](https://pair.withgoogle.com/chapter/People%20+%20AI%20Guidebook%20-%20Explainability%20+%20Trust.pdf) informed how the interface explains what feedback is based on.
+- [Amershi et al. (CHI 2019)](https://www.microsoft.com/en-us/research/publication/guidelines-for-human-ai-interaction/) provide validated human-AI interaction guidelines.
+- [Casado-Ledesma et al. (2021)](https://pure.uva.nl/ws/files/67938146/Casado_Ledesma2021_Article_TeachingArgumentativeSynthesis.pdf) studied how deliberative dialogue can help students integrate arguments and counterarguments.
 
-## Reports
-
-"Report an unfair or unhelpful assessment" saves to the artifact database (`reports/<viewer id>/items`, readable by
-the owner and editors). Where that isn't available (e.g. opened locally), it saves to the browser's localStorage only.
-
-## Limitations
-
-- Live mode was not exercised end to end during development; the demo flow was tested at desktop and phone widths.
-- AI judging can be inconsistent; anonymisation and bias instructions reduce, but don't remove, bias.
-- Custom-question screening (keyword filter plus a Claude check) can err in either direction.
-
-## Research notes
-
-Sourced findings:
-- WCAG 2.2 adds Focus Not Obscured (2.4.11, AA) and Target Size Minimum 24×24 CSS px (2.5.8, AA). https://www.w3.org/WAI/standards-guidelines/wcag/new-in-22/
-- LLM judges show position, verbosity and self-enhancement biases. Zheng et al., 2023. https://arxiv.org/abs/2306.05685
-- AI products should help users calibrate trust and explain what an output rests on. Google PAIR Guidebook. https://pair.withgoogle.com/chapter/People%20+%20AI%20Guidebook%20-%20Explainability%20+%20Trust.pdf
-- 18 validated human-AI interaction guidelines. Amershi et al., CHI 2019. https://www.microsoft.com/en-us/research/publication/guidelines-for-human-ai-interaction/
-- Deliberative dialogue helped students integrate arguments and counterarguments. Casado-Ledesma et al., Instructional Science, 2021. https://pure.uva.nl/ws/files/67938146/Casado_Ledesma2021_Article_TeachingArgumentativeSynthesis.pdf
-
-Design choices that follow from them: anonymised judging and a fixed rubric; a rubric criterion for rebuttal;
-always-visible mode and labelled demo content; 44 px controls; docked composer with scroll padding; colour paired
-with shapes (■ you, ● AI opponent).
+These findings informed anonymised judging, a fixed rubric, visible demo-mode labels, 44 px controls, and using both labels and shapes to distinguish speakers.
