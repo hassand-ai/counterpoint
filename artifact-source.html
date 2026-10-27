@@ -315,14 +315,14 @@ footer.foot { position: relative; z-index: 1; border-top: var(--bw) solid var(--
 
     <div class="section" role="group" aria-labelledby="qHead">
       <div class="section-head"><span class="step-no">Step 1</span><h2 id="qHead">Choose a question</h2></div>
-      <p class="muted small">Choose a hand-reviewed dilemma or ask Claude to create a fresh, low-stakes one. There's no right answer here; you're practising the argument, not the opinion.</p>
+      <p class="muted small">Choose a hand-reviewed dilemma or generate a fresh one. There's no right answer here; you're practising the argument, not the opinion.</p>
+      <div class="row"><button class="btn btn-primary" type="button" id="generateTopic">Generate a fresh question</button><span class="small muted" id="generateHint"></span></div>
+      <div id="generatedResult" aria-live="polite"></div>
       <ul class="topic-list" id="topicList"></ul>
 
       <details class="custom" id="customBox">
         <summary><span>Suggest your own question</span></summary>
         <div class="custom-body">
-          <div class="row"><button class="btn btn-primary btn-sm" type="button" id="generateTopic">Generate a fresh question</button><span class="small muted" id="generateHint"></span></div>
-          <div id="generatedResult" aria-live="polite"></div>
           <p class="notice warn">Your question is checked before the debate starts and may be declined. Counterpoint keeps practice debates away from politics, elections, group rights, health, law, money, violence and safety topics. Checks can make mistakes in either direction.</p>
           <div class="field">
             <label for="customInput">Your question</label>
