@@ -323,12 +323,14 @@ footer.foot { position: relative; z-index: 1; border-top: var(--bw) solid var(--
 
     <div class="section" role="group" aria-labelledby="qHead">
       <div class="section-head"><span class="step-no">Step 1</span><h2 id="qHead">Choose a question</h2></div>
-      <p class="muted small">A small, hand-reviewed set of low-stakes dilemmas. There's no right answer here; you're practising the argument, not the opinion.</p>
+      <p class="muted small">Choose a hand-reviewed dilemma or ask Claude to create a fresh, low-stakes one. There's no right answer here; you're practising the argument, not the opinion.</p>
       <ul class="topic-list" id="topicList"></ul>
 
       <details class="custom" id="customBox">
         <summary><span>Suggest your own question</span></summary>
         <div class="custom-body">
+          <div class="row"><button class="btn btn-primary btn-sm" type="button" id="generateTopic">Generate a fresh question</button><span class="small muted" id="generateHint"></span></div>
+          <div id="generatedResult" aria-live="polite"></div>
           <p class="notice warn">Your question is checked before the debate starts and may be declined. Counterpoint keeps practice debates away from politics, elections, group rights, health, law, money, violence and safety topics. Checks can make mistakes in either direction.</p>
           <div class="field">
             <label for="customInput">Your question</label>
@@ -570,7 +572,7 @@ const BLOCKED = /\b(elect\w*|vote|voting|ballot|party|parties|politic\w*|governm
 
 /* ---------- State ---------- */
 const S = {
-  mode: "detecting", sample: null, db: null,
+  mode: "detecting", sample: null, db: null, gateway: false,
   topics: TOPICS.slice(), topicId: TOPICS[0].id, side: null,
   turns: [], maxRounds: 3, busy: false, aiCtl: null, judgeCtl: null,
   result: null, phase: "home",
@@ -587,9 +589,9 @@ function setMode(m) {
   S.mode = m;
   const chip = $("modeChip");
   chip.dataset.mode = m;
-  $("modeText").innerHTML = m === "live" ? "Live<span class=long> · Claude on your account</span>" : m === "demo" ? "Demo<span class=long> mode · sample content</span>" : "Checking…";
+  $("modeText").innerHTML = m === "live" ? (S.gateway ? "Live<span class=long> · multi-model jury</span>" : "Live<span class=long> · Claude on your account</span>") : m === "demo" ? "Demo<span class=long> mode · sample content</span>" : "Checking…";
   const sw = $("modeSwitch");
-  sw.hidden = S.phase !== "home" || m === "detecting" || (m === "demo" && !S.sample);
+  sw.hidden = S.phase !== "home" || m === "detecting" || (m === "demo" && !S.sample && !S.gateway);
   sw.textContent = m === "live" ? "Use demo mode" : "Use live mode";
   $("railMode").textContent = m === "live" ? "Live" : "Demo";
   updateCustomAvailability();
@@ -597,13 +599,21 @@ function setMode(m) {
 $("modeSwitch").addEventListener("click", () => setMode(S.mode === "live" ? "demo" : "live"));
 
 (async function detect() {
-  let sample = null, db = null;
+  let sample = null, db = null, gateway = false;
   try { if (window.claude && typeof window.claude.use === "function") {
     [sample, db] = await Promise.all([window.claude.use("sample").catch(() => null), window.claude.use("db").catch(() => null)]);
   } } catch (e) { sample = null; }
-  S.sample = sample; S.db = db;
-  setMode(sample ? "live" : "demo");
+  try { const r = await fetch("/api/ensemble"); const health = await r.json(); gateway = !!health.available; } catch (e) { gateway = false; }
+  S.sample = sample; S.db = db; S.gateway = gateway;
+  setMode(sample || gateway ? "live" : "demo");
 })();
+
+async function gatewayCall(action, payload = {}, signal) {
+  const response = await fetch("/api/ensemble", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }), signal });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw { message: data.error || "The multi-model service could not complete the request." };
+  return data;
+}
 
 /* ---------- Home ---------- */
 function renderTopics() {
@@ -611,7 +621,7 @@ function renderTopics() {
     <li><label class="topic-opt">
       <input type="radio" name="topic" value="${esc(t.id)}" ${t.id === S.topicId ? "checked" : ""}>
       <span class="mark" aria-hidden="true"></span>
-      <span><span class="t-title">${esc(t.title)}</span>${t.custom ? '<span class="tag">Your question · AI-checked</span>' : ""}
+      <span><span class="t-title">${esc(t.title)}</span>${t.generated ? '<span class="tag">AI-generated</span>' : t.custom ? '<span class="tag">Your question · AI-checked</span>' : ""}
       <span class="t-ctx" style="display:block">${esc(t.ctx)}</span></span>
     </label></li>`).join("");
 }
@@ -631,7 +641,7 @@ function updateStart() {
   const ok = !!S.side && S.mode !== "detecting";
   $("startBtn").setAttribute("aria-disabled", ok ? "false" : "true");
   $("startHint").textContent = S.mode === "detecting" ? "Checking for a live AI connection…" : !S.side ? "Choose a side to begin." :
-    S.mode === "live" ? "Live: the opponent and judge are Claude. Your first live request will ask you to allow it." : "Demo: opponent turns and scoring are pre-written samples.";
+    S.mode === "live" ? (S.gateway ? "Multi-model mode: fresh questions, opponent turns, and your transcript go through OpenRouter. Three models independently judge; their median scores are combined. Provider usage may cost money." : "Live: the opponent and judge are Claude. Your first live request will ask you to allow it.") : "Demo: opponent turns and scoring are pre-written samples. Live AI debates need the Claude Artifact or configured hosted app.";
 }
 $("rubricList").innerHTML = RUBRIC.map((r) => `<li><span><strong>${esc(r.name)}.</strong> <span class="muted">${esc(r.desc)}</span></span></li>`).join("");
 
@@ -642,16 +652,43 @@ $("startBtn").addEventListener("click", () => {
   startDebate();
 });
 
+/* Fresh AI-generated topic */
+$("generateTopic").addEventListener("click", generateFreshTopic);
+async function generateFreshTopic() {
+  const btn = $("generateTopic"), out = $("generatedResult");
+  if (S.mode !== "live") {
+    out.innerHTML = `<p class="notice">Fresh questions need a live AI connection. Use the hosted multi-model app or open the Artifact for Claude-only live mode. The regular unconfigured website uses pre-written sample turns.</p>`;
+    return;
+  }
+  if (S.busy) return;
+  S.busy = true; btn.setAttribute("aria-disabled", "true");
+  out.innerHTML = `<p class="notice"><span class="thinking">Creating a fresh everyday dilemma<span class="dots" aria-hidden="true"><span></span><span></span><span></span></span></span></p>`;
+  try {
+    const r = S.gateway ? await gatewayCall("topic", { existing: S.topics.map(t => t.title) }) : await S.sample.json(`Create one original, concise debate question for an everyday ethics practice app. Make it a low-stakes choice about ordinary personal conduct, manners, friendship, honesty, or small daily decisions. Avoid politics, elections, group rights or protected traits, health, law, money, violence, self-harm, illegal activity, sexual content, and safety or other high-stakes topics. Avoid clichés and do not reuse these examples: ${S.topics.map(t => t.title).join(" | ")}.
+Return only JSON: {"title":"a clear yes/no question ending in ?","context":"one short scenario sentence","a":{"label":"the Yes position, max 10 words","sum":"one short explanation"},"b":{"label":"the No position, max 10 words","sum":"one short explanation"}}. Keep both positions plausible and balanced.`, { modelTier: "quick", cache: false });
+    if (!r || typeof r.title !== "string" || !r.a || !r.b || typeof r.a.label !== "string" || typeof r.b.label !== "string") throw { code: "invalid_json" };
+    if (BLOCKED.test(r.title + " " + (r.context || ""))) { out.innerHTML = `<p class="notice warn">That generated question fell outside the everyday topics we use. Try generating another one.</p>`; return; }
+    const t = { id: "generated-" + Date.now(), custom: true, generated: true,
+      title: r.title.slice(0, 200), ctx: String(r.context || "A fresh everyday dilemma generated for this debate.").slice(0, 240),
+      a: { label: r.a.label.slice(0, 90), sum: String(r.a.sum || "").slice(0, 200) },
+      b: { label: r.b.label.slice(0, 90), sum: String(r.b.sum || "").slice(0, 200) } };
+    S.topics = S.topics.concat(t); S.topicId = t.id; S.side = null; renderTopics(); renderSides();
+    out.innerHTML = `<p class="notice ok">Fresh question ready. Choose either side, debate Claude for three rounds, then get remarks on your argument.</p>`;
+  } catch (e) {
+    out.innerHTML = `<p class="notice err">${esc(errCopy(e, "generate"))}</p>`;
+  } finally { S.busy = false; btn.setAttribute("aria-disabled", "false"); updateCustomAvailability(); }
+}
+
 /* custom topic */
 function updateCustomAvailability() {
-  const live = S.mode === "live";
+  const live = S.mode === "live" && (S.sample || S.gateway);
   $("customCheck").setAttribute("aria-disabled", live ? "false" : "true");
   $("customHint").textContent = live ? "" : "Checking your own question needs live mode. In demo mode, use one of the questions above.";
   updateStart();
 }
 $("customCheck").addEventListener("click", async () => {
   const out = $("customResult");
-  if (S.mode !== "live") { out.innerHTML = `<p class="notice">Checking your own question needs live mode, which isn't available here. Try one of the hand-reviewed questions above.</p>`; return; }
+  if (S.mode !== "live" || (!S.sample && !S.gateway)) { out.innerHTML = `<p class="notice">Question screening needs live mode, which is not available here. Try one of the hand-reviewed questions above.</p>`; return; }
   if (S.busy) return;
   const q = $("customInput").value.trim();
   if (q.length < 10) { out.innerHTML = `<p class="notice err">Write a full question of at least a few words, for example "Is it fine to …?"</p>`; $("customInput").focus(); return; }
@@ -662,7 +699,7 @@ $("customCheck").addEventListener("click", async () => {
   S.busy = true; $("customCheck").setAttribute("aria-disabled", "true");
   out.innerHTML = `<p class="notice"><span class="thinking">Checking your question<span class="dots" aria-hidden="true"><span></span><span></span><span></span></span></span></p>`;
   try {
-    const r = await S.sample.json(
+    const r = S.gateway ? await gatewayCall("screen", { question: q }) : await S.sample.json(
 `You screen questions for a debate-practice app for everyday, low-stakes ethical dilemmas.
 Accept only questions about ordinary personal conduct, manners, friendship, honesty, small everyday choices.
 Decline anything involving: elections, parties or politicians, current political or military conflicts, rights or traits of protected groups (race, religion, sexuality, gender, disability, nationality), violence, self-harm, illegal activity, sexual content, medical, legal or financial advice, or anything high-stakes or likely to cause harm. Also decline if it is not really a two-sided question.
@@ -675,7 +712,7 @@ Reply with only JSON: {"accept": boolean, "reason": "one neutral sentence, no ju
     const t = { id: "custom-" + Date.now(), custom: true, title: String(r.title).slice(0, 200), ctx: String(r.context || "Your own question.").slice(0, 200),
       a: { label: String(r.a.label).slice(0, 90), sum: String(r.a.sum || "").slice(0, 200) }, b: { label: String(r.b.label).slice(0, 90), sum: String(r.b.sum || "").slice(0, 200) } };
     S.topics = TOPICS.slice().concat(t); S.topicId = t.id; S.side = null; renderTopics(); renderSides();
-    out.innerHTML = `<p class="notice ok">Accepted and added to the list. This question was checked by Claude, not hand-reviewed. Choose your side below.</p>`;
+    out.innerHTML = `<p class="notice ok">Accepted and added to the list. This question was AI-checked, not hand-reviewed. Choose your side below.</p>`;
   } catch (e) {
     out.innerHTML = `<p class="notice err">${esc(errCopy(e, "check"))}</p>`;
   } finally { S.busy = false; updateCustomAvailability(); }
@@ -694,7 +731,8 @@ function errCopy(e, what) {
   if (c === "rate_limited") return "Too many requests right now, or a usage limit was reached. Wait a minute, then retry.";
   if (c === "session_expired") return "Your Claude session has expired. Sign in again, then retry.";
   if (c === "refused") return what === "ai" ? "The AI opponent couldn't respond to that turn. Your text is back in the box; try rephrasing it and submit again." : what === "check" ? "Claude declined to check that question. Try a different everyday question." : "The judge declined to assess this transcript. You can retry or start a new debate.";
-  if (c === "invalid_json") return what === "judge" ? "The judge's answer couldn't be read. Retry to ask again." : "The check returned an unreadable answer. Try again.";
+  if (e && e.message) return e.message;
+  if (c === "invalid_json") return what === "judge" ? "The judge's answer couldn't be read. Retry to ask again." : what === "generate" ? "The generated question could not be read. Try again." : "The check returned an unreadable answer. Try again.";
   return "The connection to Claude failed. Retry, or continue in demo mode.";
 }
 const fatal = (e) => ["not_granted", "sampling_disabled", "capability_disabled", "not_declared", "capability_removed"].includes(e && e.code);
@@ -807,7 +845,7 @@ async function aiReply() {
   }
   const ctl = new AbortController(); S.aiCtl = ctl;
   try {
-    const { text } = await S.sample(opponentInput(), { signal: ctl.signal, modelTier: "quick", cache: false,
+    const { text } = S.gateway ? await gatewayCall("reply", { round: userRounds() - 1, prompt: opponentInput().map(m => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n") }, ctl.signal) : await S.sample(opponentInput(), { signal: ctl.signal, modelTier: "quick", cache: false,
       onText: ({ text }) => { const body = document.querySelector(`#turn-${idx} .turn-body`); if (body) body.textContent = text; } });
     S.turns[idx] = { who: "ai", text: text.trim() };
     finishAi();
@@ -920,7 +958,7 @@ Excerpts must be copied word for word from that debater's own turns. Use one or 
 async function runJudge() {
   S.result = null;
   show("results");
-  $("railJudge").textContent = S.mode === "live" ? "Claude (separate call)" : "Demo sample";
+  $("railJudge").textContent = S.gateway ? "Multi-model jury" : S.mode === "live" ? "Claude (separate call)" : "Demo sample";
   $("railScored").textContent = `${userRounds()} you · ${S.turns.filter((t) => t.who === "ai").length} AI`;
   const body = $("resultsBody");
   body.innerHTML = `<div class="loading-block" role="status">
@@ -934,7 +972,8 @@ async function runJudge() {
   const ctl = new AbortController(); S.judgeCtl = ctl;
   $("cancelJudge").addEventListener("click", () => ctl.abort());
   try {
-    const raw = await S.sample.json(judgePrompt(), { signal: ctl.signal, modelTier: "default" });
+    const jt = judgeTranscript();
+    const raw = S.gateway ? await gatewayCall("judge", { topic: topic(), sideLabel: topic()[S.side].label, opponentLabel: topic()[S.side === "a" ? "b" : "a"].label, transcript: `${jt.header}\n\n${jt.body}` }, ctl.signal) : await S.sample.json(judgePrompt(), { signal: ctl.signal, modelTier: "default" });
     if (S.phase !== "results") return;
     renderResult(normalise(raw));
   } catch (e) {
@@ -970,7 +1009,7 @@ function normalise(raw) {
     return { ...r, you: side(c.A, youText), ai: side(c.B, aiText) };
   });
   return {
-    demo: false, criteria,
+    demo: false, criteria, ensemble: raw.ensemble || null,
     comparison: String(raw.comparison || "").slice(0, 900),
     facts: (Array.isArray(raw.factual_claims) ? raw.factual_claims : []).slice(0, 5).map((f) => ({ who: f.speaker === "B" ? "ai" : "you", claim: String(f.claim || "").slice(0, 300), note: String(f.note || "").slice(0, 300) })).filter((f) => f.claim),
     suggestions: (Array.isArray(raw.suggestions) ? raw.suggestions : []).map(String).filter(Boolean).slice(0, 3),
@@ -1017,7 +1056,7 @@ function renderResult(r) {
   <div class="screen" style="gap:var(--s7)">
     <div class="verdict">
       ${r.demo ? '<p class="notice warn"><strong>Demo assessment.</strong> These scores are illustrative and were not computed from your argument. Excerpts are taken from your transcript only to show the layout.</p>' : ""}
-      <span class="meta">Result · ${esc(topic().title)}</span>
+      <span class="meta">Result · ${esc(topic().title)}${r.ensemble ? ` · jury: ${esc(r.ensemble.models.join(", "))}` : ""}</span>
       <h2 id="resultsTitle" tabindex="-1" style="font-size:var(--t-2xl)">${headline}</h2>
       <div class="scoreline" aria-label="Totals: you ${ty} of 25, AI opponent ${ta} of 25">
         <div class="score-big you"><span class="meta" style="color:var(--rust)">■ You</span><span class="n">${ty}</span><span class="of">of 25</span></div>
